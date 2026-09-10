@@ -1,20 +1,24 @@
 #!/bin/sh
-# cpkg - a friendly renamed frontend for Debian/Ubuntu APT
-# Uses the system's configured Debian/Ubuntu repositories and package database.
+# cpkg - a friendly universal package-manager frontend
+# Supports Debian/Ubuntu APT and Arch Linux pacman.
 
 set -eu
 
 usage() {
     cat <<'EOF'
-cpkg - Debian/Ubuntu package manager frontend
+cpkg - universal package manager frontend
 
 Usage:
   cpkg <command> [packages...]
 
+Supported backends:
+  APT      Debian, Ubuntu, and compatible distributions
+  pacman   Arch Linux and compatible distributions
+
 Commands:
   install <pkg...>       Install packages
   remove <pkg...>        Remove packages
-  purge <pkg...>         Remove packages and configuration files
+  purge <pkg...>         Remove packages and configuration files (APT)
   update                 Refresh package lists
   upgrade                Upgrade installed packages
   full-upgrade           Full system upgrade
@@ -22,10 +26,11 @@ Commands:
   search <term>          Search available packages
   show <pkg...>          Show package information
   list                   List installed packages
-  policy <pkg...>        Show package versions and repository policy
+  policy <pkg...>        Show package versions and repository policy (APT)
   clean                  Clean downloaded package files
-  autoclean              Remove obsolete downloaded package files
+  autoclean              Remove obsolete downloaded package files (APT)
   version                Show cpkg version
+  backend                Show the detected package-manager backend
   help                   Show this help
 
 Examples:
@@ -34,21 +39,29 @@ Examples:
   cpkg search terminal
   cpkg show bash
   cpkg remove package-name
+  cpkg backend
 
-cpkg does not provide its own repository. It uses the Debian/Ubuntu APT
-configuration already installed on the system.
+cpkg does not provide its own package repository. It uses the package manager
+and repositories already configured on the host system.
 EOF
 }
 
+if command -v apt-get >/dev/null 2>&1 && command -v apt-cache >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then
+    BACKEND=apt
+elif command -v pacman >/dev/null 2>&1; then
+    BACKEND=pacman
+else
+    echo "cpkg: no supported package manager found (APT or pacman)." >&2
+    exit 1
+fi
+
 need_root() {
     if [ "$(id -u)" -eq 0 ]; then
-        printf '%s\n' "apt-get $*"
-        apt-get "$@"
+        "$@"
     elif command -v sudo >/dev/null 2>&1; then
-        printf '%s\n' "sudo apt-get $*"
-        sudo apt-get "$@"
+        sudo "$@"
     else
-        printf '%s\n' "cpkg: root privileges are required (sudo was not found)." >&2
+        echo "cpkg: root privileges are required (sudo was not found)." >&2
         exit 1
     fi
 }
@@ -57,65 +70,122 @@ case "${1:-help}" in
     install)
         shift
         [ "$#" -gt 0 ] || { echo "cpkg: install requires at least one package" >&2; exit 2; }
-        need_root install "$@"
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get install "$@"
+        else
+            need_root pacman -S "$@"
+        fi
         ;;
     remove)
         shift
         [ "$#" -gt 0 ] || { echo "cpkg: remove requires at least one package" >&2; exit 2; }
-        need_root remove "$@"
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get remove "$@"
+        else
+            need_root pacman -R "$@"
+        fi
         ;;
     purge)
         shift
         [ "$#" -gt 0 ] || { echo "cpkg: purge requires at least one package" >&2; exit 2; }
-        need_root purge "$@"
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get purge "$@"
+        else
+            echo "cpkg: purge is not available with pacman; use 'cpkg remove' or pacman directly." >&2
+            exit 2
+        fi
         ;;
     update)
         [ "$#" -eq 1 ] || { echo "cpkg: update takes no arguments" >&2; exit 2; }
-        need_root update
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get update
+        else
+            need_root pacman -Sy
+        fi
         ;;
     upgrade)
         [ "$#" -eq 1 ] || { echo "cpkg: upgrade takes no arguments" >&2; exit 2; }
-        need_root upgrade
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get upgrade
+        else
+            need_root pacman -Su
+        fi
         ;;
     full-upgrade)
         [ "$#" -eq 1 ] || { echo "cpkg: full-upgrade takes no arguments" >&2; exit 2; }
-        need_root full-upgrade
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get full-upgrade
+        else
+            need_root pacman -Syu
+        fi
         ;;
     autoremove)
         [ "$#" -eq 1 ] || { echo "cpkg: autoremove takes no arguments" >&2; exit 2; }
-        need_root autoremove
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get autoremove
+        else
+            need_root pacman -Rns $(pacman -Qdtq 2>/dev/null) 2>/dev/null || true
+        fi
         ;;
     search)
         shift
         [ "$#" -gt 0 ] || { echo "cpkg: search requires a search term" >&2; exit 2; }
-        apt-cache search "$*"
+        if [ "$BACKEND" = apt ]; then
+            apt-cache search "$*"
+        else
+            pacman -Ss "$*"
+        fi
         ;;
     show)
         shift
         [ "$#" -gt 0 ] || { echo "cpkg: show requires at least one package" >&2; exit 2; }
-        apt-cache show "$@"
+        if [ "$BACKEND" = apt ]; then
+            apt-cache show "$@"
+        else
+            pacman -Si "$@"
+        fi
         ;;
     list)
         shift
         [ "$#" -eq 0 ] || { echo "cpkg: list takes no arguments" >&2; exit 2; }
-        dpkg-query -W -f='${binary:Package}\t${Version}\n'
+        if [ "$BACKEND" = apt ]; then
+            dpkg-query -W -f='${binary:Package}\t${Version}\n'
+        else
+            pacman -Q
+        fi
         ;;
     policy)
         shift
         [ "$#" -gt 0 ] || { echo "cpkg: policy requires at least one package" >&2; exit 2; }
-        apt-cache policy "$@"
+        if [ "$BACKEND" = apt ]; then
+            apt-cache policy "$@"
+        else
+            pacman -Si "$@"
+        fi
         ;;
     clean)
         [ "$#" -eq 1 ] || { echo "cpkg: clean takes no arguments" >&2; exit 2; }
-        need_root clean
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get clean
+        else
+            need_root pacman -Scc
+        fi
         ;;
     autoclean)
         [ "$#" -eq 1 ] || { echo "cpkg: autoclean takes no arguments" >&2; exit 2; }
-        need_root autoclean
+        if [ "$BACKEND" = apt ]; then
+            need_root apt-get autoclean
+        else
+            echo "cpkg: autoclean is not available with pacman; use 'cpkg clean' instead." >&2
+            exit 2
+        fi
+        ;;
+    backend)
+        echo "$BACKEND"
         ;;
     version|--version|-v)
-        echo "cpkg 1.0.0"
-        echo "Debian/Ubuntu APT frontend"
+        echo "cpkg 1.1.0"
+        echo "Universal APT/pacman frontend"
         ;;
     help|--help|-h)
         usage
