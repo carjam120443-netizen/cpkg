@@ -1,0 +1,64 @@
+name: Build pacman package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-pacman:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Install build tools
+        run: pacman -Sy --noconfirm --needed base-devel git
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build .pkg.tar.xz
+        run: |
+          set -eux
+          VERSION=$(sed -n 's/.*cpkg \([0-9][0-9.]*\).*/\1/p' cpkg | head -n1)
+          VERSION=${VERSION:-1.1.0}
+
+          rm -rf pkgbuild pkgdest
+          mkdir -p pkgbuild pkgdest
+          cp cpkg pkgbuild/cpkg
+          chmod 0755 pkgbuild/cpkg
+
+          cat > pkgbuild/PKGBUILD <<EOF
+          pkgname=cpkg
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc='Universal package manager frontend for APT and pacman'
+          arch=('any')
+          license=('custom')
+          depends=('bash')
+
+          package() {
+              install -Dm755 "\${srcdir}/cpkg" "\${pkgdir}/usr/bin/cpkg"
+          }
+          EOF
+
+          cd pkgbuild
+          PKGDEST="$GITHUB_WORKSPACE/pkgdest" makepkg --nodeps --noconfirm
+
+          # Arch's makepkg uses .pkg.tar.zst by default. Repack as .pkg.tar.xz
+          # so cpkg also has the requested legacy pacman package format.
+          mkdir -p repack
+          PACKAGE=$(find "$GITHUB_WORKSPACE/pkgdest" -name 'cpkg-*.pkg.tar.*' -type f | head -n1)
+          tar -I zstd -xf "$PACKAGE" -C repack
+          tar -cJf "$GITHUB_WORKSPACE/cpkg-${VERSION}-1-any.pkg.tar.xz" -C repack .
+
+      - name: Upload .pkg.tar.xz artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpkg-pacman
+          path: cpkg-*.pkg.tar.xz
+          if-no-files-found: error
