@@ -1,0 +1,128 @@
+#!/bin/sh
+# cpkg - a friendly renamed frontend for Debian/Ubuntu APT
+# Uses the system's configured Debian/Ubuntu repositories and package database.
+
+set -eu
+
+usage() {
+    cat <<'EOF'
+cpkg - Debian/Ubuntu package manager frontend
+
+Usage:
+  cpkg <command> [packages...]
+
+Commands:
+  install <pkg...>       Install packages
+  remove <pkg...>        Remove packages
+  purge <pkg...>         Remove packages and configuration files
+  update                 Refresh package lists
+  upgrade                Upgrade installed packages
+  full-upgrade           Full system upgrade
+  autoremove             Remove unused dependencies
+  search <term>          Search available packages
+  show <pkg...>          Show package information
+  list                   List installed packages
+  policy <pkg...>        Show package versions and repository policy
+  clean                  Clean downloaded package files
+  autoclean              Remove obsolete downloaded package files
+  version                Show cpkg version
+  help                   Show this help
+
+Examples:
+  cpkg update
+  cpkg install firefox git
+  cpkg search terminal
+  cpkg show bash
+  cpkg remove package-name
+
+cpkg does not provide its own repository. It uses the Debian/Ubuntu APT
+configuration already installed on the system.
+EOF
+}
+
+need_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        printf '%s\n' "apt-get $*"
+        apt-get "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        printf '%s\n' "sudo apt-get $*"
+        sudo apt-get "$@"
+    else
+        printf '%s\n' "cpkg: root privileges are required (sudo was not found)." >&2
+        exit 1
+    fi
+}
+
+case "${1:-help}" in
+    install)
+        shift
+        [ "$#" -gt 0 ] || { echo "cpkg: install requires at least one package" >&2; exit 2; }
+        need_root install "$@"
+        ;;
+    remove)
+        shift
+        [ "$#" -gt 0 ] || { echo "cpkg: remove requires at least one package" >&2; exit 2; }
+        need_root remove "$@"
+        ;;
+    purge)
+        shift
+        [ "$#" -gt 0 ] || { echo "cpkg: purge requires at least one package" >&2; exit 2; }
+        need_root purge "$@"
+        ;;
+    update)
+        [ "$#" -eq 1 ] || { echo "cpkg: update takes no arguments" >&2; exit 2; }
+        need_root update
+        ;;
+    upgrade)
+        [ "$#" -eq 1 ] || { echo "cpkg: upgrade takes no arguments" >&2; exit 2; }
+        need_root upgrade
+        ;;
+    full-upgrade)
+        [ "$#" -eq 1 ] || { echo "cpkg: full-upgrade takes no arguments" >&2; exit 2; }
+        need_root full-upgrade
+        ;;
+    autoremove)
+        [ "$#" -eq 1 ] || { echo "cpkg: autoremove takes no arguments" >&2; exit 2; }
+        need_root autoremove
+        ;;
+    search)
+        shift
+        [ "$#" -gt 0 ] || { echo "cpkg: search requires a search term" >&2; exit 2; }
+        apt-cache search "$*"
+        ;;
+    show)
+        shift
+        [ "$#" -gt 0 ] || { echo "cpkg: show requires at least one package" >&2; exit 2; }
+        apt-cache show "$@"
+        ;;
+    list)
+        shift
+        [ "$#" -eq 0 ] || { echo "cpkg: list takes no arguments" >&2; exit 2; }
+        dpkg-query -W -f='${binary:Package}\t${Version}\n'
+        ;;
+    policy)
+        shift
+        [ "$#" -gt 0 ] || { echo "cpkg: policy requires at least one package" >&2; exit 2; }
+        apt-cache policy "$@"
+        ;;
+    clean)
+        [ "$#" -eq 1 ] || { echo "cpkg: clean takes no arguments" >&2; exit 2; }
+        need_root clean
+        ;;
+    autoclean)
+        [ "$#" -eq 1 ] || { echo "cpkg: autoclean takes no arguments" >&2; exit 2; }
+        need_root autoclean
+        ;;
+    version|--version|-v)
+        echo "cpkg 1.0.0"
+        echo "Debian/Ubuntu APT frontend"
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        echo "cpkg: unknown command: $1" >&2
+        echo "Run 'cpkg help' for usage." >&2
+        exit 2
+        ;;
+esac
